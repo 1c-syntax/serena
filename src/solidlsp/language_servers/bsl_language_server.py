@@ -7,6 +7,7 @@ See: https://github.com/1c-syntax/bsl-language-server
 
 The language server is automatically downloaded from GitHub releases as a platform-specific
 ZIP file that includes a bundled runtime, so no separate Java installation is required.
+The latest stable version is detected automatically via GitHub API.
 
 You can configure the following options in ls_specific_settings (in serena_config.yml):
 
@@ -29,6 +30,7 @@ import pathlib
 import stat
 from typing import cast
 
+import requests
 from overrides import override
 
 from solidlsp.ls import SolidLanguageServer
@@ -41,13 +43,42 @@ from solidlsp.settings import SolidLSPSettings
 log = logging.getLogger(__name__)
 
 
-# BSL Language Server version and download URLs for platform-specific ZIP files
-BSL_LS_VERSION = "0.25.2"
-BSL_LS_DOWNLOAD_URLS = {
-    "win": f"https://github.com/1c-syntax/bsl-language-server/releases/download/v{BSL_LS_VERSION}/bsl-language-server_win.zip",
-    "nix": f"https://github.com/1c-syntax/bsl-language-server/releases/download/v{BSL_LS_VERSION}/bsl-language-server_nix.zip",
-    "mac": f"https://github.com/1c-syntax/bsl-language-server/releases/download/v{BSL_LS_VERSION}/bsl-language-server_mac.zip",
-}
+# BSL Language Server GitHub repository info
+BSL_LS_GITHUB_ORG = "1c-syntax"
+BSL_LS_GITHUB_REPO = "bsl-language-server"
+# Fallback version if GitHub API is unavailable
+BSL_LS_FALLBACK_VERSION = "0.25.2"
+
+
+def _get_latest_bsl_ls_version() -> str:
+    """
+    Fetches the latest stable release version from GitHub API.
+    Returns the version tag (e.g., "v0.25.2") or falls back to a hardcoded version if API is unavailable.
+    """
+    try:
+        response = requests.get(
+            f"https://api.github.com/repos/{BSL_LS_GITHUB_ORG}/{BSL_LS_GITHUB_REPO}/releases/latest",
+            headers={"Accept": "application/vnd.github.v3+json", "User-Agent": "Serena-SolidLSP"},
+            timeout=10,
+        )
+        if response.status_code == 200:
+            release_info = response.json()
+            tag_name = release_info.get("tag_name", "")
+            if tag_name:
+                log.info(f"Detected latest BSL Language Server version: {tag_name}")
+                return tag_name
+    except Exception as e:
+        log.warning(f"Could not fetch latest BSL LS version from GitHub API: {e}")
+
+    log.info(f"Using fallback BSL Language Server version: v{BSL_LS_FALLBACK_VERSION}")
+    return f"v{BSL_LS_FALLBACK_VERSION}"
+
+
+def _get_download_url(version: str, platform_key: str) -> str:
+    """
+    Constructs the download URL for a specific version and platform.
+    """
+    return f"https://github.com/{BSL_LS_GITHUB_ORG}/{BSL_LS_GITHUB_REPO}/releases/download/{version}/bsl-language-server_{platform_key}.zip"
 
 
 @dataclasses.dataclass
@@ -110,6 +141,7 @@ class BSLLanguageServer(SolidLanguageServer):
         """
         Setup runtime dependencies for BSL Language Server and return paths.
         Downloads platform-specific ZIP from GitHub releases if not already installed.
+        Automatically detects the latest version via GitHub API.
         """
         platform_id = PlatformUtils.get_platform_id()
 
@@ -137,6 +169,9 @@ class BSLLanguageServer(SolidLanguageServer):
                 else:
                     log.warning(f"Configured BSL LS executable path does not exist: {custom_executable}")
 
+        # Get latest version from GitHub API
+        version = _get_latest_bsl_ls_version()
+
         # Setup directory for BSL Language Server
         static_dir = os.path.join(cls.ls_resources_dir(solidlsp_settings), "bsl_language_server")
         os.makedirs(static_dir, exist_ok=True)
@@ -146,7 +181,7 @@ class BSLLanguageServer(SolidLanguageServer):
         # - Windows: bsl-language-server/bsl-language-server.exe
         # - Linux: bsl-language-server/bin/bsl-language-server
         # - macOS: bsl-language-server.app/Contents/MacOS/bsl-language-server
-        bsl_ls_dir = os.path.join(static_dir, f"bsl-language-server-{BSL_LS_VERSION}")
+        bsl_ls_dir = os.path.join(static_dir, f"bsl-language-server-{version}")
 
         if platform_key == "win":
             executable_path = os.path.join(bsl_ls_dir, "bsl-language-server", executable_name)
@@ -157,8 +192,8 @@ class BSLLanguageServer(SolidLanguageServer):
 
         # Download and extract if not already present
         if not os.path.exists(executable_path):
-            download_url = BSL_LS_DOWNLOAD_URLS[platform_key]
-            log.info(f"Downloading BSL Language Server v{BSL_LS_VERSION} for {platform_key}...")
+            download_url = _get_download_url(version, platform_key)
+            log.info(f"Downloading BSL Language Server {version} for {platform_key}...")
             FileUtils.download_and_extract_archive(download_url, bsl_ls_dir, "zip")
 
             # Make executable on Unix platforms
