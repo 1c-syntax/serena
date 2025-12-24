@@ -306,6 +306,7 @@ markers = [
   "powershell: language server running for PowerShell",
   "slow: tests that require additional Expert instances and have long startup times (~60-90s each)",
   "toml: language server running for TOML",
+  "bsl: language server running for BSL (1C:Enterprise)",
 ]
 
 [tool.codespell]
