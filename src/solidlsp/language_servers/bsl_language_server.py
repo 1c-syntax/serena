@@ -5,25 +5,28 @@ Contains various configurations and settings specific to BSL Language Server.
 BSL Language Server is an open-source language server for 1C:Enterprise 8 and OneScript.
 See: https://github.com/1c-syntax/bsl-language-server
 
+The language server is automatically downloaded from GitHub releases as a platform-specific
+ZIP file that includes a bundled runtime, so no separate Java installation is required.
+
 You can configure the following options in ls_specific_settings (in serena_config.yml):
 
     ls_specific_settings:
       bsl:
-        ls_jar_path: '/path/to/bsl-language-server-exec.jar'  # Path to the BSL LS JAR file
-        ls_java_home_path: '/path/to/java'  # Optional: Custom Java home path
+        ls_executable_path: '/path/to/bsl-language-server'  # Path to custom BSL LS executable
         configuration_path: '/path/to/.bsl-language-server.json'  # Optional: BSL LS config file
 
 Example configuration:
 
     ls_specific_settings:
       bsl:
-        ls_jar_path: '/home/user/.local/bsl-language-server-0.25.2-exec.jar'
+        configuration_path: '/home/user/project/.bsl-language-server.json'
 """
 
 import dataclasses
 import logging
 import os
 import pathlib
+import stat
 from typing import cast
 
 from overrides import override
@@ -38,10 +41,13 @@ from solidlsp.settings import SolidLSPSettings
 log = logging.getLogger(__name__)
 
 
-# BSL Language Server download URL (latest stable version)
+# BSL Language Server version and download URLs for platform-specific ZIP files
 BSL_LS_VERSION = "0.25.2"
-BSL_LS_JAR_NAME = f"bsl-language-server-{BSL_LS_VERSION}-exec.jar"
-BSL_LS_DOWNLOAD_URL = f"https://github.com/1c-syntax/bsl-language-server/releases/download/v{BSL_LS_VERSION}/{BSL_LS_JAR_NAME}"
+BSL_LS_DOWNLOAD_URLS = {
+    "win": f"https://github.com/1c-syntax/bsl-language-server/releases/download/v{BSL_LS_VERSION}/bsl-language-server_win.zip",
+    "nix": f"https://github.com/1c-syntax/bsl-language-server/releases/download/v{BSL_LS_VERSION}/bsl-language-server_nix.zip",
+    "mac": f"https://github.com/1c-syntax/bsl-language-server/releases/download/v{BSL_LS_VERSION}/bsl-language-server_mac.zip",
+}
 
 
 @dataclasses.dataclass
@@ -50,9 +56,7 @@ class BSLRuntimeDependencyPaths:
     Stores the paths to the runtime dependencies of BSL Language Server
     """
 
-    java_path: str
-    java_home_path: str
-    ls_jar_path: str
+    executable_path: str
 
 
 class BSLLanguageServer(SolidLanguageServer):
@@ -80,9 +84,7 @@ class BSLLanguageServer(SolidLanguageServer):
 
         # Create command to execute the BSL Language Server
         cmd = [
-            self.runtime_dependency_paths.java_path,
-            "-jar",
-            self.runtime_dependency_paths.ls_jar_path,
+            self.runtime_dependency_paths.executable_path,
             "lsp",
             "--stdio",
         ]
@@ -95,13 +97,10 @@ class BSLLanguageServer(SolidLanguageServer):
                 cmd.extend(["--configuration", config_path])
                 log.info(f"Using BSL LS configuration from: {config_path}")
 
-        # Set environment variables including JAVA_HOME
-        proc_env = {"JAVA_HOME": self.runtime_dependency_paths.java_home_path}
-
         super().__init__(
             config,
             repository_root_path,
-            ProcessLaunchInfo(cmd=cmd, env=proc_env, cwd=repository_root_path),
+            ProcessLaunchInfo(cmd=cmd, cwd=repository_root_path),
             "bsl",
             solidlsp_settings,
         )
@@ -110,122 +109,68 @@ class BSLLanguageServer(SolidLanguageServer):
     def _setup_runtime_dependencies(cls, solidlsp_settings: SolidLSPSettings) -> BSLRuntimeDependencyPaths:
         """
         Setup runtime dependencies for BSL Language Server and return paths.
+        Downloads platform-specific ZIP from GitHub releases if not already installed.
         """
         platform_id = PlatformUtils.get_platform_id()
 
-        # Verify platform support
-        assert (
-            platform_id.value.startswith("win-") or platform_id.value.startswith("linux-") or platform_id.value.startswith("osx-")
-        ), "Only Windows, Linux and macOS platforms are supported for BSL in SolidLSP at the moment"
+        # Verify platform support and determine platform key for download
+        if platform_id.value.startswith("win-"):
+            platform_key = "win"
+            executable_name = "bsl-language-server.exe"
+        elif platform_id.value.startswith("linux-"):
+            platform_key = "nix"
+            executable_name = "bsl-language-server"
+        elif platform_id.value.startswith("osx-"):
+            platform_key = "mac"
+            executable_name = "bsl-language-server"
+        else:
+            raise AssertionError("Only Windows, Linux and macOS platforms are supported for BSL in SolidLSP at the moment")
 
-        # Check if user specified custom Java home path
-        java_home_path = None
-        java_path = None
-
+        # Check if user specified custom executable path
         if solidlsp_settings and solidlsp_settings.ls_specific_settings:
             bsl_settings = solidlsp_settings.get_ls_specific_settings(Language.BSL)
-            custom_java_home = bsl_settings.get("ls_java_home_path")
-            if custom_java_home:
-                log.info(f"Using custom Java home path from configuration: {custom_java_home}")
-                java_home_path = custom_java_home
-
-                # Determine java executable path based on platform
-                if platform_id.value.startswith("win-"):
-                    java_path = os.path.join(java_home_path, "bin", "java.exe")
+            custom_executable = bsl_settings.get("ls_executable_path")
+            if custom_executable:
+                if os.path.exists(custom_executable):
+                    log.info(f"Using custom BSL LS executable from configuration: {custom_executable}")
+                    return BSLRuntimeDependencyPaths(executable_path=custom_executable)
                 else:
-                    java_path = os.path.join(java_home_path, "bin", "java")
+                    log.warning(f"Configured BSL LS executable path does not exist: {custom_executable}")
 
-        # If no custom Java home path, download and use bundled Java
-        if java_home_path is None:
-            # Runtime dependency information (same as other Java-based LS)
-            runtime_dependencies = {
-                "java": {
-                    "win-x64": {
-                        "url": "https://github.com/redhat-developer/vscode-java/releases/download/v1.42.0/java-win32-x64-1.42.0-561.vsix",
-                        "archiveType": "zip",
-                        "java_home_path": "extension/jre/21.0.7-win32-x86_64",
-                        "java_path": "extension/jre/21.0.7-win32-x86_64/bin/java.exe",
-                    },
-                    "linux-x64": {
-                        "url": "https://github.com/redhat-developer/vscode-java/releases/download/v1.42.0/java-linux-x64-1.42.0-561.vsix",
-                        "archiveType": "zip",
-                        "java_home_path": "extension/jre/21.0.7-linux-x86_64",
-                        "java_path": "extension/jre/21.0.7-linux-x86_64/bin/java",
-                    },
-                    "linux-arm64": {
-                        "url": "https://github.com/redhat-developer/vscode-java/releases/download/v1.42.0/java-linux-arm64-1.42.0-561.vsix",
-                        "archiveType": "zip",
-                        "java_home_path": "extension/jre/21.0.7-linux-aarch64",
-                        "java_path": "extension/jre/21.0.7-linux-aarch64/bin/java",
-                    },
-                    "osx-x64": {
-                        "url": "https://github.com/redhat-developer/vscode-java/releases/download/v1.42.0/java-darwin-x64-1.42.0-561.vsix",
-                        "archiveType": "zip",
-                        "java_home_path": "extension/jre/21.0.7-macosx-x86_64",
-                        "java_path": "extension/jre/21.0.7-macosx-x86_64/bin/java",
-                    },
-                    "osx-arm64": {
-                        "url": "https://github.com/redhat-developer/vscode-java/releases/download/v1.42.0/java-darwin-arm64-1.42.0-561.vsix",
-                        "archiveType": "zip",
-                        "java_home_path": "extension/jre/21.0.7-macosx-aarch64",
-                        "java_path": "extension/jre/21.0.7-macosx-aarch64/bin/java",
-                    },
-                },
-            }
-
-            java_dependency = runtime_dependencies["java"][platform_id.value]
-
-            static_dir = os.path.join(cls.ls_resources_dir(solidlsp_settings), "bsl_language_server")
-            os.makedirs(static_dir, exist_ok=True)
-
-            java_dir = os.path.join(static_dir, "java")
-            os.makedirs(java_dir, exist_ok=True)
-
-            java_home_path = os.path.join(java_dir, java_dependency["java_home_path"])
-            java_path = os.path.join(java_dir, java_dependency["java_path"])
-
-            if not os.path.exists(java_path):
-                log.info(f"Downloading Java for {platform_id.value}...")
-                FileUtils.download_and_extract_archive(java_dependency["url"], java_dir, java_dependency["archiveType"])
-
-                if not platform_id.value.startswith("win-"):
-                    os.chmod(java_path, 0o755)
-
-        assert java_path and os.path.exists(java_path), f"Java executable not found at {java_path}"
-
-        ls_jar_path = cls._find_or_download_bsl_ls_jar(solidlsp_settings)
-
-        return BSLRuntimeDependencyPaths(java_path=java_path, java_home_path=java_home_path, ls_jar_path=ls_jar_path)
-
-    @classmethod
-    def _find_or_download_bsl_ls_jar(cls, solidlsp_settings: SolidLSPSettings) -> str:
-        """
-        Find or download BSL Language Server JAR file.
-        """
-        # Check if user specified a custom JAR path
-        if solidlsp_settings and solidlsp_settings.ls_specific_settings:
-            bsl_settings = solidlsp_settings.get_ls_specific_settings(Language.BSL)
-            config_jar_path = bsl_settings.get("ls_jar_path")
-            if config_jar_path:
-                if os.path.exists(config_jar_path):
-                    log.info(f"Using BSL LS JAR from configuration: {config_jar_path}")
-                    return config_jar_path
-                else:
-                    log.warning(f"Configured BSL LS JAR path does not exist: {config_jar_path}")
-
-        # Download the BSL Language Server JAR if not found
+        # Setup directory for BSL Language Server
         static_dir = os.path.join(cls.ls_resources_dir(solidlsp_settings), "bsl_language_server")
         os.makedirs(static_dir, exist_ok=True)
 
-        jar_path = os.path.join(static_dir, BSL_LS_JAR_NAME)
+        # Path to the extracted BSL LS directory
+        # ZIP extracts with different structure per platform:
+        # - Windows: bsl-language-server/bsl-language-server.exe
+        # - Linux: bsl-language-server/bin/bsl-language-server
+        # - macOS: bsl-language-server.app/Contents/MacOS/bsl-language-server
+        bsl_ls_dir = os.path.join(static_dir, f"bsl-language-server-{BSL_LS_VERSION}")
 
-        if not os.path.exists(jar_path):
-            log.info(f"Downloading BSL Language Server v{BSL_LS_VERSION}...")
-            FileUtils.download_and_extract_archive(BSL_LS_DOWNLOAD_URL, jar_path, "binary")
+        if platform_key == "win":
+            executable_path = os.path.join(bsl_ls_dir, "bsl-language-server", executable_name)
+        elif platform_key == "nix":
+            executable_path = os.path.join(bsl_ls_dir, "bsl-language-server", "bin", executable_name)
+        else:  # mac
+            executable_path = os.path.join(bsl_ls_dir, "bsl-language-server.app", "Contents", "MacOS", executable_name)
 
-        assert os.path.exists(jar_path), f"BSL Language Server JAR not found at {jar_path}"
+        # Download and extract if not already present
+        if not os.path.exists(executable_path):
+            download_url = BSL_LS_DOWNLOAD_URLS[platform_key]
+            log.info(f"Downloading BSL Language Server v{BSL_LS_VERSION} for {platform_key}...")
+            FileUtils.download_and_extract_archive(download_url, bsl_ls_dir, "zip")
 
-        return jar_path
+            # Make executable on Unix platforms
+            if not platform_id.value.startswith("win-") and os.path.exists(executable_path):
+                os.chmod(
+                    executable_path,
+                    stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH,
+                )
+
+        assert os.path.exists(executable_path), f"BSL Language Server executable not found at {executable_path}"
+
+        return BSLRuntimeDependencyPaths(executable_path=executable_path)
 
     @staticmethod
     def _get_initialize_params(repository_absolute_path: str) -> InitializeParams:
