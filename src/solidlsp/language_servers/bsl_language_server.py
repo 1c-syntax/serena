@@ -7,7 +7,8 @@ See: https://github.com/1c-syntax/bsl-language-server
 
 The language server is automatically downloaded from GitHub releases as a platform-specific
 ZIP file that includes a bundled runtime, so no separate Java installation is required.
-The latest stable version is detected automatically via GitHub API.
+The latest stable version is detected automatically via GitHub API, and updates are
+downloaded automatically when a new version is available.
 
 You can configure the following options in ls_specific_settings (in serena_config.yml):
 
@@ -24,14 +25,18 @@ Example configuration:
 """
 
 import dataclasses
+import json
 import logging
 import os
 import pathlib
+import shutil
 import stat
+import time
 from typing import cast
 
 import requests
 from overrides import override
+from packaging import version as pkg_version
 
 from solidlsp.ls import SolidLanguageServer
 from solidlsp.ls_config import Language, LanguageServerConfig
@@ -48,12 +53,57 @@ BSL_LS_GITHUB_ORG = "1c-syntax"
 BSL_LS_GITHUB_REPO = "bsl-language-server"
 # Fallback version if GitHub API is unavailable
 BSL_LS_FALLBACK_VERSION = "0.25.2"
+# Minimum interval between update checks (in seconds) - 8 minutes like vsc-language-1c-bsl
+BSL_LS_UPDATE_CHECK_INTERVAL = 480
+# Server info file name
+BSL_LS_SERVER_INFO_FILE = "SERVER-INFO"
 
 
-def _get_latest_bsl_ls_version() -> str:
+@dataclasses.dataclass
+class BSLServerInfo:
+    """
+    Information about the installed BSL Language Server.
+    """
+
+    version: str
+    last_update_check: float  # Unix timestamp of last update check
+
+
+def _read_server_info(static_dir: str) -> BSLServerInfo | None:
+    """
+    Reads the server info from the SERVER-INFO file.
+    Returns None if the file doesn't exist or is invalid.
+    """
+    info_file = os.path.join(static_dir, BSL_LS_SERVER_INFO_FILE)
+    try:
+        if os.path.exists(info_file):
+            with open(info_file, encoding="utf-8") as f:
+                data = json.load(f)
+                return BSLServerInfo(
+                    version=data.get("version", ""),
+                    last_update_check=data.get("last_update_check", 0),
+                )
+    except Exception as e:
+        log.warning(f"Could not read BSL LS server info: {e}")
+    return None
+
+
+def _write_server_info(static_dir: str, info: BSLServerInfo) -> None:
+    """
+    Writes the server info to the SERVER-INFO file.
+    """
+    info_file = os.path.join(static_dir, BSL_LS_SERVER_INFO_FILE)
+    try:
+        with open(info_file, "w", encoding="utf-8") as f:
+            json.dump({"version": info.version, "last_update_check": info.last_update_check}, f)
+    except Exception as e:
+        log.warning(f"Could not write BSL LS server info: {e}")
+
+
+def _get_latest_bsl_ls_version() -> str | None:
     """
     Fetches the latest stable release version from GitHub API.
-    Returns the version tag (e.g., "v0.25.2") or falls back to a hardcoded version if API is unavailable.
+    Returns the version tag (e.g., "v0.25.2") or None if API is unavailable.
     """
     try:
         response = requests.get(
@@ -69,9 +119,27 @@ def _get_latest_bsl_ls_version() -> str:
                 return tag_name
     except Exception as e:
         log.warning(f"Could not fetch latest BSL LS version from GitHub API: {e}")
+    return None
 
-    log.info(f"Using fallback BSL Language Server version: v{BSL_LS_FALLBACK_VERSION}")
-    return f"v{BSL_LS_FALLBACK_VERSION}"
+
+def _normalize_version(version_str: str) -> str:
+    """
+    Normalizes version string by removing 'v' prefix if present.
+    """
+    return version_str.lstrip("v")
+
+
+def _is_newer_version(latest: str, installed: str) -> bool:
+    """
+    Compares two version strings and returns True if latest is newer than installed.
+    """
+    try:
+        latest_normalized = _normalize_version(latest)
+        installed_normalized = _normalize_version(installed)
+        return pkg_version.parse(latest_normalized) > pkg_version.parse(installed_normalized)
+    except Exception as e:
+        log.warning(f"Could not compare versions '{latest}' and '{installed}': {e}")
+        return False
 
 
 def _get_download_url(version: str, platform_key: str) -> str:
@@ -141,7 +209,7 @@ class BSLLanguageServer(SolidLanguageServer):
         """
         Setup runtime dependencies for BSL Language Server and return paths.
         Downloads platform-specific ZIP from GitHub releases if not already installed.
-        Automatically detects the latest version via GitHub API.
+        Automatically detects the latest version via GitHub API and updates if needed.
         """
         platform_id = PlatformUtils.get_platform_id()
 
@@ -169,12 +237,49 @@ class BSLLanguageServer(SolidLanguageServer):
                 else:
                     log.warning(f"Configured BSL LS executable path does not exist: {custom_executable}")
 
-        # Get latest version from GitHub API
-        version = _get_latest_bsl_ls_version()
-
         # Setup directory for BSL Language Server
         static_dir = os.path.join(cls.ls_resources_dir(solidlsp_settings), "bsl_language_server")
         os.makedirs(static_dir, exist_ok=True)
+
+        # Read current server info
+        server_info = _read_server_info(static_dir)
+        current_time = time.time()
+
+        # Determine if we need to check for updates
+        should_check_for_updates = True
+        if server_info:
+            seconds_since_last_check = current_time - server_info.last_update_check
+            if seconds_since_last_check < BSL_LS_UPDATE_CHECK_INTERVAL:
+                log.debug(f"Skipping BSL LS update check, last check was {seconds_since_last_check:.0f}s ago")
+                should_check_for_updates = False
+
+        # Get version to use
+        version: str | None = None
+        latest_version: str | None = None
+
+        if should_check_for_updates:
+            latest_version = _get_latest_bsl_ls_version()
+            if latest_version:
+                if server_info and server_info.version:
+                    if _is_newer_version(latest_version, server_info.version):
+                        log.info(f"New BSL Language Server version available: {latest_version} (installed: {server_info.version})")
+                        version = latest_version
+                    else:
+                        log.info(f"BSL Language Server is up to date: {server_info.version}")
+                        version = server_info.version
+                else:
+                    version = latest_version
+            elif server_info and server_info.version:
+                # API unavailable but we have an installed version
+                log.info(f"Using installed BSL Language Server version: {server_info.version}")
+                version = server_info.version
+        elif server_info and server_info.version:
+            version = server_info.version
+
+        # Fallback to hardcoded version if nothing else worked
+        if not version:
+            version = f"v{BSL_LS_FALLBACK_VERSION}"
+            log.info(f"Using fallback BSL Language Server version: {version}")
 
         # Path to the extracted BSL LS directory
         # ZIP extracts with different structure per platform:
@@ -205,7 +310,28 @@ class BSLLanguageServer(SolidLanguageServer):
 
         assert os.path.exists(executable_path), f"BSL Language Server executable not found at {executable_path}"
 
+        # Update server info
+        _write_server_info(static_dir, BSLServerInfo(version=version, last_update_check=current_time))
+
+        # Clean up old versions (keep only current version)
+        cls._cleanup_old_versions(static_dir, version)
+
         return BSLRuntimeDependencyPaths(executable_path=executable_path)
+
+    @classmethod
+    def _cleanup_old_versions(cls, static_dir: str, current_version: str) -> None:
+        """
+        Removes old BSL Language Server versions, keeping only the current one.
+        """
+        try:
+            current_dir_name = f"bsl-language-server-{current_version}"
+            for item in os.listdir(static_dir):
+                item_path = os.path.join(static_dir, item)
+                if os.path.isdir(item_path) and item.startswith("bsl-language-server-") and item != current_dir_name:
+                    log.info(f"Removing old BSL LS version: {item}")
+                    shutil.rmtree(item_path, ignore_errors=True)
+        except Exception as e:
+            log.warning(f"Could not clean up old BSL LS versions: {e}")
 
     @staticmethod
     def _get_initialize_params(repository_absolute_path: str) -> InitializeParams:
