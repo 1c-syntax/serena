@@ -373,12 +373,6 @@ class BSLLanguageServer(SolidLanguageServer):
                                 "valueSet": [
                                     "quickfix",
                                     "refactor",
-                                    "refactor.extract",
-                                    "refactor.inline",
-                                    "refactor.rewrite",
-                                    "source",
-                                    "source.organizeImports",
-                                    "source.fixAll",
                                 ]
                             }
                         },
@@ -388,6 +382,14 @@ class BSLLanguageServer(SolidLanguageServer):
                         "resolveSupport": {"properties": ["edit"]},
                     },
                     "codeLens": {"dynamicRegistration": True},
+                    "documentLink": {"dynamicRegistration": True, "tooltipSupport": True},
+                    "colorProvider": {"dynamicRegistration": True},
+                    "rename": {
+                        "dynamicRegistration": True,
+                        "prepareSupport": True,
+                        "prepareSupportDefaultBehavior": 1,
+                        "honorsChangeAnnotations": True,
+                    },
                     "publishDiagnostics": {
                         "relatedInformation": True,
                         "tagSupport": {"valueSet": [1, 2]},
@@ -405,7 +407,7 @@ class BSLLanguageServer(SolidLanguageServer):
                     "callHierarchy": {"dynamicRegistration": True},
                     "semanticTokens": {
                         "dynamicRegistration": True,
-                        "requests": {"range": True, "full": {"delta": True}},
+                        "requests": {"range": False, "full": {"delta": True}},
                         "tokenTypes": [
                             "namespace",
                             "type",
@@ -446,6 +448,10 @@ class BSLLanguageServer(SolidLanguageServer):
                         "overlappingTokenSupport": False,
                         "multilineTokenSupport": True,
                     },
+                    "inlayHint": {
+                        "dynamicRegistration": True,
+                        "resolveSupport": {"properties": ["tooltip", "textEdits", "label.tooltip", "label.location", "label.command"]},
+                    },
                 },
                 "workspace": {
                     "applyEdit": True,
@@ -468,6 +474,7 @@ class BSLLanguageServer(SolidLanguageServer):
                     "configuration": True,
                     "semanticTokens": {"refreshSupport": True},
                     "codeLens": {"refreshSupport": True},
+                    "inlayHint": {"refreshSupport": True},
                 },
                 "window": {
                     "workDoneProgress": True,
