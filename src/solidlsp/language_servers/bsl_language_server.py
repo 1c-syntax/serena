@@ -407,7 +407,7 @@ class BSLLanguageServer(SolidLanguageServer):
                     "callHierarchy": {"dynamicRegistration": True},
                     "semanticTokens": {
                         "dynamicRegistration": True,
-                        "requests": {"range": False, "full": {"delta": True}},
+                        "requests": {"range": True, "full": {"delta": True}},
                         "tokenTypes": [
                             "namespace",
                             "type",
