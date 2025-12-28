@@ -355,35 +355,9 @@ class BSLLanguageServer(SolidLanguageServer):
                         "willSave": True,
                         "willSaveWaitUntil": True,
                     },
-                    "completion": {
-                        "dynamicRegistration": True,
-                        "completionItem": {
-                            "snippetSupport": True,
-                            "documentationFormat": ["markdown", "plaintext"],
-                            "deprecatedSupport": True,
-                            "preselectSupport": True,
-                            "insertReplaceSupport": True,
-                            "labelDetailsSupport": True,
-                            "resolveSupport": {"properties": ["documentation", "detail", "additionalTextEdits"]},
-                        },
-                        "contextSupport": True,
-                    },
                     "hover": {"dynamicRegistration": True, "contentFormat": ["markdown", "plaintext"]},
-                    "signatureHelp": {
-                        "dynamicRegistration": True,
-                        "signatureInformation": {
-                            "documentationFormat": ["markdown", "plaintext"],
-                            "parameterInformation": {"labelOffsetSupport": True},
-                            "activeParameterSupport": True,
-                        },
-                        "contextSupport": True,
-                    },
-                    "declaration": {"dynamicRegistration": True, "linkSupport": True},
                     "definition": {"dynamicRegistration": True, "linkSupport": True},
-                    "typeDefinition": {"dynamicRegistration": True, "linkSupport": True},
-                    "implementation": {"dynamicRegistration": True, "linkSupport": True},
                     "references": {"dynamicRegistration": True},
-                    "documentHighlight": {"dynamicRegistration": True},
                     "documentSymbol": {
                         "dynamicRegistration": True,
                         "hierarchicalDocumentSymbolSupport": True,
@@ -392,7 +366,6 @@ class BSLLanguageServer(SolidLanguageServer):
                     },
                     "formatting": {"dynamicRegistration": True},
                     "rangeFormatting": {"dynamicRegistration": True},
-                    "onTypeFormatting": {"dynamicRegistration": True},
                     "codeAction": {
                         "dynamicRegistration": True,
                         "codeActionLiteralSupport": {
@@ -415,14 +388,6 @@ class BSLLanguageServer(SolidLanguageServer):
                         "resolveSupport": {"properties": ["edit"]},
                     },
                     "codeLens": {"dynamicRegistration": True},
-                    "documentLink": {"dynamicRegistration": True, "tooltipSupport": True},
-                    "colorProvider": {"dynamicRegistration": True},
-                    "rename": {
-                        "dynamicRegistration": True,
-                        "prepareSupport": True,
-                        "prepareSupportDefaultBehavior": 1,
-                        "honorsChangeAnnotations": True,
-                    },
                     "publishDiagnostics": {
                         "relatedInformation": True,
                         "tagSupport": {"valueSet": [1, 2]},
@@ -481,11 +446,6 @@ class BSLLanguageServer(SolidLanguageServer):
                         "overlappingTokenSupport": False,
                         "multilineTokenSupport": True,
                     },
-                    "inlayHint": {
-                        "dynamicRegistration": True,
-                        "resolveSupport": {"properties": ["tooltip", "textEdits", "label.tooltip", "label.location", "label.command"]},
-                    },
-                    "typeHierarchy": {"dynamicRegistration": True},
                 },
                 "workspace": {
                     "applyEdit": True,
@@ -508,7 +468,6 @@ class BSLLanguageServer(SolidLanguageServer):
                     "configuration": True,
                     "semanticTokens": {"refreshSupport": True},
                     "codeLens": {"refreshSupport": True},
-                    "inlayHint": {"refreshSupport": True},
                 },
                 "window": {
                     "workDoneProgress": True,
