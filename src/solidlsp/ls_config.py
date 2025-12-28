@@ -65,7 +65,6 @@ class Language(str, Enum):
     VUE = "vue"
     POWERSHELL = "powershell"
     BSL = "bsl"
-    """BSL Language Server for 1C:Enterprise and OneScript."""
     # Experimental or deprecated Language Servers
     TYPESCRIPT_VTS = "typescript_vts"
     """Use the typescript language server through the natively bundled vscode extension via https://github.com/yioneko/vtsls"""
