@@ -64,6 +64,7 @@ class Language(str, Enum):
     GROOVY = "groovy"
     VUE = "vue"
     POWERSHELL = "powershell"
+    BSL = "bsl"
     # Experimental or deprecated Language Servers
     TYPESCRIPT_VTS = "typescript_vts"
     """Use the typescript language server through the natively bundled vscode extension via https://github.com/yioneko/vtsls"""
@@ -225,6 +226,8 @@ class Language(str, Enum):
                 return FilenameMatcher("*.ps1", "*.psm1", "*.psd1")
             case self.GROOVY:
                 return FilenameMatcher("*.groovy", "*.gvy")
+            case self.BSL:
+                return FilenameMatcher("*.bsl", "*.os")
             case _:
                 raise ValueError(f"Unhandled language: {self}")
 
@@ -390,6 +393,10 @@ class Language(str, Enum):
                 from solidlsp.language_servers.groovy_language_server import GroovyLanguageServer
 
                 return GroovyLanguageServer
+            case self.BSL:
+                from solidlsp.language_servers.bsl_language_server import BSLLanguageServer
+
+                return BSLLanguageServer
             case _:
                 raise ValueError(f"Unhandled language: {self}")
 
